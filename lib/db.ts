@@ -3,7 +3,9 @@ import path from "path";
 import fs from "fs";
 import bcrypt from "bcryptjs";
 
-const DB_PATH = path.join(process.cwd(), "data", "hotel.db");
+const DB_PATH = process.env.VERCEL
+     ? path.join("/tmp", "hotel.db")
+     : path.join(process.cwd(), "data", "hotel.db");
 
 if (!fs.existsSync(path.dirname(DB_PATH))) {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
