@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import MailThread from "@/components/MailThread";
+import NewReservationForm from "@/components/NewReservationForm";
 
 interface Reservation {
   id: number;
@@ -50,6 +51,8 @@ export default function StaffDashboard() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<number | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -84,12 +87,18 @@ export default function StaffDashboard() {
   }, [loadingAuth]);
 
   async function updateStatus(id: number, status: string) {
-    await fetch(`/api/reservations/${id}`, {
+    const res = await fetch(`/api/reservations/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, notifyGuest: true }),
     });
+    const data = await res.json();
     loadReservations();
+    loadThreads();
+    if (data.staffMessage) {
+      setToast(data.staffMessage);
+      setTimeout(() => setToast(null), 5000);
+    }
   }
 
   async function handleLogout() {
@@ -124,26 +133,36 @@ export default function StaffDashboard() {
       </header>
 
       <div className="mx-auto max-w-6xl px-6 py-8">
-        <div className="flex gap-2 mb-6">
-          <button
-            onClick={() => setTab("reservations")}
-            className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-              tab === "reservations" ? "bg-forest text-ivory" : "bg-white text-forest/60 border border-line"
-            }`}
-          >
-            Reservations
-          </button>
-          <button
-            onClick={() => setTab("mail")}
-            className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-              tab === "mail" ? "bg-forest text-ivory" : "bg-white text-forest/60 border border-line"
-            }`}
-          >
-            Concierge Mail
-            {threads.some((t) => !t.is_read) && (
-              <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-clay" />
-            )}
-          </button>
+        <div className="flex gap-2 mb-6 items-center justify-between">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setTab("reservations")}
+              className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
+                tab === "reservations" ? "bg-forest text-ivory" : "bg-white text-forest/60 border border-line"
+              }`}
+            >
+              Reservations
+            </button>
+            <button
+              onClick={() => setTab("mail")}
+              className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
+                tab === "mail" ? "bg-forest text-ivory" : "bg-white text-forest/60 border border-line"
+              }`}
+            >
+              Concierge Mail
+              {threads.some((t) => !t.is_read) && (
+                <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-clay" />
+              )}
+            </button>
+          </div>
+          {tab === "reservations" && (
+            <button
+              onClick={() => setShowNewForm(true)}
+              className="px-4 py-2 rounded text-sm font-medium bg-brass text-white hover:bg-brass-light transition-colors"
+            >
+              + New Reservation
+            </button>
+          )}
         </div>
 
         {tab === "reservations" && (
@@ -236,6 +255,23 @@ export default function StaffDashboard() {
           </div>
         )}
       </div>
+
+      {showNewForm && (
+        <NewReservationForm
+          onClose={() => setShowNewForm(false)}
+          onCreated={() => {
+            setShowNewForm(false);
+            loadReservations();
+            loadThreads();
+          }}
+        />
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 right-6 bg-forest text-ivory px-5 py-3 rounded-lg shadow-lg text-sm max-w-sm z-50">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
