@@ -1,6 +1,7 @@
-// Generates in-character "hotel concierge" email replies using the Anthropic API.
-// This never sends real email — messages are stored in mail_message and shown
-// in the site's own inbox UI (staff dashboard + guest confirmation page).
+// Generates in-character "hotel concierge" email replies using Google's
+// Gemini API. This never sends real email — messages are stored in
+// mail_message and shown in the site's own inbox UI (staff dashboard +
+// guest confirmation page).
 
 const HOTEL_NAME = process.env.HOTEL_NAME || "The Aldervale Hotel";
 
@@ -12,7 +13,7 @@ interface ConciergeContext {
 }
 
 export async function generateConciergeReply(ctx: ConciergeContext): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
     // Fallback so the feature still works without a key configured.
     return `Dear ${ctx.guestName},\n\nThank you for reaching out to ${HOTEL_NAME}. Our concierge team has received your message and will follow up shortly.\n\nWarm regards,\n${HOTEL_NAME} Concierge`;
@@ -26,37 +27,44 @@ export async function generateConciergeReply(ctx: ConciergeContext): Promise<str
     ctx.reservationSummary ? `\n\nReservation details:\n${ctx.reservationSummary}` : ""
   }`;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 500,
-      system: systemPrompt,
-      messages: [
-        {
-          role: "user",
-          content: `Email thread so far:\n\n${historyText}\n\nWrite the next concierge reply to ${ctx.guestName}, subject: "${ctx.subject}".`,
+  const userPrompt = `Email thread so far:\n\n${historyText}\n\nWrite the next concierge reply to ${ctx.guestName}, subject: "${ctx.subject}".`;
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: systemPrompt }],
         },
-      ],
-    }),
-  });
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: userPrompt }],
+          },
+        ],
+        generationConfig: {
+          maxOutputTokens: 500,
+        },
+      }),
+    }
+  );
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error("Anthropic API error:", errText);
+    console.error("Gemini API error:", errText);
     return `Dear ${ctx.guestName},\n\nThank you for your message. Our team is currently reviewing it and will respond as soon as possible.\n\nWarm regards,\n${HOTEL_NAME} Concierge`;
   }
 
   const data = await response.json();
-  const text = data.content
-    ?.map((block: { type: string; text?: string }) => (block.type === "text" ? block.text : ""))
-    .filter(Boolean)
-    .join("\n") || "";
+  const text =
+    data.candidates?.[0]?.content?.parts
+      ?.map((part: { text?: string }) => part.text || "")
+      .filter(Boolean)
+      .join("\n") || "";
 
   return text.trim() || `Thank you for your message, ${ctx.guestName}. We'll be in touch shortly.`;
 }
