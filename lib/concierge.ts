@@ -61,6 +61,39 @@ export async function generateConciergeReply(ctx: ConciergeContext): Promise<str
   return text.trim() || `Thank you for your message, ${ctx.guestName}. We'll be in touch shortly.`;
 }
 
+export async function generateStatusUpdateEmail(params: {
+  guestName: string;
+  roomTypeName: string;
+  checkIn: string;
+  checkOut: string;
+  confirmationCode: string;
+  newStatus: string;
+}): Promise<string> {
+  const statusPhrasing: Record<string, string> = {
+    pending: "is now marked as pending review",
+    confirmed: "has been confirmed",
+    checked_in: "check-in has been completed — welcome!",
+    checked_out: "check-out has been completed — thank you for staying with us",
+    cancelled: "has been cancelled",
+  };
+
+  const reservationSummary = `Room: ${params.roomTypeName}\nCheck-in: ${params.checkIn}\nCheck-out: ${params.checkOut}\nConfirmation code: ${params.confirmationCode}\nUpdate: reservation ${
+    statusPhrasing[params.newStatus] || `status changed to ${params.newStatus}`
+  }`;
+
+  return generateConciergeReply({
+    guestName: params.guestName,
+    subject: "An Update on Your Reservation",
+    threadHistory: [
+      {
+        sender: "guest",
+        body: `Requesting an update on my reservation status.`,
+      },
+    ],
+    reservationSummary,
+  });
+}
+
 export async function generateBookingConfirmationEmail(params: {
   guestName: string;
   roomTypeName: string;
