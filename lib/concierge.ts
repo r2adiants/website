@@ -30,7 +30,7 @@ export async function generateConciergeReply(ctx: ConciergeContext): Promise<str
   const userPrompt = `Email thread so far:\n\n${historyText}\n\nWrite the next concierge reply to ${ctx.guestName}, subject: "${ctx.subject}".`;
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: {
