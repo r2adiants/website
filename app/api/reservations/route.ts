@@ -35,10 +35,28 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { guestName, guestEmail, roomTypeId, checkIn, checkOut, guests, specialRequests } = body;
+  const {
+    guestName,
+    guestEmail,
+    roomTypeId,
+    checkIn,
+    checkOut,
+    guests,
+    specialRequests,
+    status: requestedStatus,
+    createdByStaff,
+  } = body;
 
   if (!guestName || !guestEmail || !roomTypeId || !checkIn || !checkOut) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  }
+
+  // Staff-created bookings require a staff session.
+  if (createdByStaff) {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
   const roomType = db.prepare("SELECT * FROM room_types WHERE id = ?").get(roomTypeId) as
@@ -69,12 +87,13 @@ export async function POST(req: Request) {
   const nights = nightsBetween(checkIn, checkOut);
   const totalPrice = nights * roomType.price_per_night;
   const confirmationCode = generateConfirmationCode();
+  const status = createdByStaff ? requestedStatus || "pending" : "confirmed";
 
   const result = db
     .prepare(
       `INSERT INTO reservations
        (confirmation_code, guest_name, guest_email, room_type_id, check_in, check_out, guests, special_requests, total_price, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed')`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       confirmationCode,
@@ -85,12 +104,13 @@ export async function POST(req: Request) {
       checkOut,
       guests || 1,
       specialRequests || null,
-      totalPrice
+      totalPrice,
+      status
     );
 
   const reservationId = result.lastInsertRowid as number;
 
-  // Create a mail thread + AI-generated confirmation message
+  // Create a mail thread for this reservation
   const threadResult = db
     .prepare(
       `INSERT INTO mail_thread (reservation_id, guest_email, guest_name, subject, is_read)
@@ -100,29 +120,57 @@ export async function POST(req: Request) {
 
   const threadId = threadResult.lastInsertRowid as number;
 
-  db.prepare(
-    `INSERT INTO mail_message (thread_id, sender, body) VALUES (?, 'guest', ?)`
-  ).run(threadId, `I just booked a room. Please confirm my reservation details.`);
+  if (createdByStaff) {
+    // No synthetic "guest" opening message — staff booked this on the
+    // guest's behalf. Only send the AI confirmation if the booking is
+    // already confirmed; if it's left pending, staff can notify later
+    // via the status-change flow.
+    if (status === "confirmed") {
+      let confirmationEmail: string;
+      try {
+        confirmationEmail = await generateBookingConfirmationEmail({
+          guestName,
+          roomTypeName: roomType.name,
+          checkIn,
+          checkOut,
+          guests: guests || 1,
+          totalPrice,
+          confirmationCode,
+        });
+      } catch (err) {
+        console.error("Concierge email generation failed:", err);
+        confirmationEmail = `Dear ${guestName},\n\nYour reservation (${confirmationCode}) for the ${roomType.name} from ${checkIn} to ${checkOut} is confirmed. Total: $${totalPrice}.\n\nWarm regards,\nConcierge Team`;
+      }
+      db.prepare(
+        `INSERT INTO mail_message (thread_id, sender, body) VALUES (?, 'concierge', ?)`
+      ).run(threadId, confirmationEmail);
+    }
+  } else {
+    // Guest self-booked: keep the original flow with a synthetic opening
+    // message and an immediate AI confirmation reply.
+    db.prepare(
+      `INSERT INTO mail_message (thread_id, sender, body) VALUES (?, 'guest', ?)`
+    ).run(threadId, `I just booked a room. Please confirm my reservation details.`);
 
-  let confirmationEmail: string;
-  try {
-    confirmationEmail = await generateBookingConfirmationEmail({
-      guestName,
-      roomTypeName: roomType.name,
-      checkIn,
-      checkOut,
-      guests: guests || 1,
-      totalPrice,
-      confirmationCode,
-    });
-  } catch (err) {
-    console.error("Concierge email generation failed:", err);
-    confirmationEmail = `Dear ${guestName},\n\nYour reservation (${confirmationCode}) for the ${roomType.name} from ${checkIn} to ${checkOut} is confirmed. Total: $${totalPrice}.\n\nWarm regards,\nConcierge Team`;
+    let confirmationEmail: string;
+    try {
+      confirmationEmail = await generateBookingConfirmationEmail({
+        guestName,
+        roomTypeName: roomType.name,
+        checkIn,
+        checkOut,
+        guests: guests || 1,
+        totalPrice,
+        confirmationCode,
+      });
+    } catch (err) {
+      console.error("Concierge email generation failed:", err);
+      confirmationEmail = `Dear ${guestName},\n\nYour reservation (${confirmationCode}) for the ${roomType.name} from ${checkIn} to ${checkOut} is confirmed. Total: $${totalPrice}.\n\nWarm regards,\nConcierge Team`;
+    }
+    db.prepare(
+      `INSERT INTO mail_message (thread_id, sender, body) VALUES (?, 'concierge', ?)`
+    ).run(threadId, confirmationEmail);
   }
-
-  db.prepare(
-    `INSERT INTO mail_message (thread_id, sender, body) VALUES (?, 'concierge', ?)`
-  ).run(threadId, confirmationEmail);
 
   return NextResponse.json({
     reservation: {
@@ -135,7 +183,7 @@ export async function POST(req: Request) {
       checkOut,
       guests: guests || 1,
       totalPrice,
-      status: "confirmed",
+      status,
     },
     threadId,
   });
